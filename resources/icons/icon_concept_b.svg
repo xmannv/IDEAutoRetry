@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Background -->
+  <rect width="128" height="128" rx="16" fill="#1a1a1a"/>
+  
+  <!-- Badge background -->
+  <rect x="12" y="44" width="104" height="40" rx="8" fill="#ffffff"/>
+  
+  <!-- RETRY Text in badge -->
+  <text x="64" y="72" text-anchor="middle" 
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" 
+        font-size="22" font-weight="900" fill="#1a1a1a" letter-spacing="2">
+    RETRY
+  </text>
+</svg>

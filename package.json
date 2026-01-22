@@ -1,0 +1,168 @@
+{
+  "name": "ide-auto-retry",
+  "displayName": "IDE Auto Retry",
+  "description": "Auto-click Retry buttons when AI coding agents encounter errors. Zero-babysitting automation for VS Code, Cursor, and compatible editors.",
+  "version": "1.0.0",
+  "publisher": "codetay",
+  "author": "Duc Luong <https://codetay.com>",
+  "icon": "resources/icons/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xmannv/ide-auto-retry"
+  },
+  "bugs": {
+    "url": "https://github.com/xmannv/ide-auto-retry/issues"
+  },
+  "homepage": "https://github.com/xmannv/ide-auto-retry#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "auto retry",
+    "ai agent",
+    "cursor auto retry",
+    "vscode auto retry",
+    "gemini",
+    "copilot",
+    "claude",
+    "automation",
+    "cdp",
+    "chrome devtools protocol"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:ideAutoRetry.mainPanel"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ideAutoRetry.start",
+        "title": "IDE Auto Retry: Start",
+        "icon": "$(play)"
+      },
+      {
+        "command": "ideAutoRetry.stop",
+        "title": "IDE Auto Retry: Stop",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "ideAutoRetry.toggle",
+        "title": "IDE Auto Retry: Toggle",
+        "icon": {
+          "light": "resources/icons/toggle.svg",
+          "dark": "resources/icons/toggle.svg"
+        }
+      },
+      {
+        "command": "ideAutoRetry.setupCDP",
+        "title": "IDE Auto Retry: Setup CDP",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "ideAutoRetry.openPanel",
+        "title": "IDE Auto Retry: Open Panel",
+        "icon": {
+          "light": "resources/icons/toggle.svg",
+          "dark": "resources/icons/toggle.svg"
+        }
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ide-auto-retry",
+          "title": "IDE Auto Retry",
+          "icon": "resources/icons/sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "ide-auto-retry": [
+        {
+          "type": "webview",
+          "id": "ideAutoRetry.mainPanel",
+          "name": "Auto Retry"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "IDE Auto Retry",
+      "properties": {
+        "ideAutoRetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable IDE Auto Retry extension"
+        },
+        "ideAutoRetry.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start Auto Retry when IDE launches"
+        },
+        "ideAutoRetry.cdpPort": {
+          "type": "number",
+          "default": 31905,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "CDP remote debugging port"
+        },
+        "ideAutoRetry.cdpPortRange": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Port range to scan (port ± range)"
+        },
+        "ideAutoRetry.pollInterval": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "Interval in milliseconds between retry checks"
+        },
+        "ideAutoRetry.cooldown": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Cooldown in milliseconds after clicking retry button"
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ideAutoRetry.openPanel",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:extension && npm run build:webview",
+    "build:extension": "node esbuild.js --production",
+    "build:webview": "cd webview && npm run build",
+    "dev": "node esbuild.js --watch",
+    "dev:webview": "cd webview && npm run dev",
+    "lint": "eslint src --ext ts",
+    "package": "npx vsce package --no-yarn",
+    "publish": "npx vsce publish --no-yarn",
+    "postinstall": "cd webview && npm install"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "ws": "^8.14.0"
+  }
+}
