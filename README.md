@@ -17,13 +17,22 @@ Zero-babysitting automation for VS Code, Cursor, and compatible editors.
 This extension uses Chrome DevTools Protocol (CDP) to interact with the IDE. You need to launch your IDE with a special flag:
 
 ```bash
-# macOS
+# macOS Antigravity
+open -a "Antigravity" --args --remote-debugging-port=31905
+
+# macOS Visual Studio Code
 open -a "Visual Studio Code" --args --remote-debugging-port=31905
 
-# Windows
+# Windows Antigravity
+antigravity.exe --remote-debugging-port=31905
+
+# Windows Visual Studio Code
 code.exe --remote-debugging-port=31905
 
-# Linux
+# Linux Antigravity
+antigravity --remote-debugging-port=31905
+
+# Linux Visual Studio Code
 code --remote-debugging-port=31905
 ```
 

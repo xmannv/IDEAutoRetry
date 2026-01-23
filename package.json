@@ -2,21 +2,21 @@
   "name": "ide-auto-retry",
   "displayName": "IDE Auto Retry",
   "description": "Auto-click Retry buttons when AI coding agents encounter errors. Zero-babysitting automation for VS Code, Cursor, and compatible editors.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "codetay",
   "author": "Duc Luong <https://codetay.com>",
   "icon": "resources/icons/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/xmannv/ide-auto-retry"
+    "url": "https://github.com/xmannv/IDEAutoRetry"
   },
   "bugs": {
-    "url": "https://github.com/xmannv/ide-auto-retry/issues"
+    "url": "https://github.com/xmannv/IDEAutoRetry/issues"
   },
-  "homepage": "https://github.com/xmannv/ide-auto-retry#readme",
+  "homepage": "https://github.com/xmannv/IDEAutoRetry#readme",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.104.0"
   },
   "categories": [
     "Other"
