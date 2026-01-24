@@ -102,6 +102,13 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Update stats (called when stats change)
+   */
+  public async updateStats(): Promise<void> {
+    await this.sendStats();
+  }
+
+  /**
    * Handle start from webview
    */
   private async handleStart(): Promise<void> {

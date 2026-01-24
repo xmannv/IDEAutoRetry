@@ -2,7 +2,7 @@
   "name": "ide-auto-retry",
   "displayName": "IDE Auto Retry",
   "description": "Auto-click Retry buttons when AI coding agents encounter errors. Zero-babysitting automation for VS Code, Cursor, and compatible editors.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "codetay",
   "author": "Duc Luong <https://codetay.com>",
   "icon": "resources/icons/icon.png",

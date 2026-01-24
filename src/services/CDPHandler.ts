@@ -32,6 +32,7 @@ export class CDPHandler {
   private isEnabled: boolean = false;
   private msgId: number = 1;
   private logCallback?: CDPLogCallback;
+  private statusUpdateCallback?: () => void;
   private basePort: number;
   private portRange: number;
 
@@ -61,6 +62,13 @@ export class CDPHandler {
    */
   setLogCallback(callback: CDPLogCallback): void {
     this.logCallback = callback;
+  }
+
+  /**
+   * Set status update callback for status bar updates
+   */
+  setStatusUpdateCallback(callback: () => void): void {
+    this.statusUpdateCallback = callback;
   }
 
   /**
