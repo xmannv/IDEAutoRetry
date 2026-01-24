@@ -21,8 +21,11 @@ export class AutoRetryService {
   private cdpHandler: CDPHandler;
   private relauncher: Relauncher;
   private logCallback?: AutoRetryLogCallback;
+  private statusUpdateCallback?: () => void;
   private pollTimer?: ReturnType<typeof setInterval>;
+  private statsTimer?: ReturnType<typeof setInterval>;
   private config: AutoRetryConfig;
+  private cachedClicks: number = 0;
 
   constructor() {
     this.config = this.getConfig();
@@ -49,6 +52,14 @@ export class AutoRetryService {
     this.logCallback = callback;
     this.cdpHandler.setLogCallback(callback as CDPLogCallback);
     this.relauncher.setLogCallback(callback);
+  }
+
+  /**
+   * Set status update callback for status bar updates
+   */
+  public setStatusUpdateCallback(callback: () => void): void {
+    this.statusUpdateCallback = callback;
+    this.cdpHandler.setStatusUpdateCallback(callback);
   }
 
   /**
@@ -118,6 +129,20 @@ export class AutoRetryService {
       });
     }, 5000);
 
+    // Start stats polling to update status bar
+    this.statsTimer = setInterval(async () => {
+      if (!this.isRunning) return;
+
+      const stats = await this.cdpHandler.getStats();
+      if (stats.clicks !== this.cachedClicks) {
+        this.cachedClicks = stats.clicks;
+        this.statusUpdateCallback?.();
+      }
+    }, 2000);
+
+    // Immediately update status bar
+    this.statusUpdateCallback?.();
+
     return true;
   }
 
@@ -132,8 +157,17 @@ export class AutoRetryService {
       this.pollTimer = undefined;
     }
 
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = undefined;
+    }
+
+    this.cachedClicks = 0;
     await this.cdpHandler.stop();
     this.log('Auto Retry stopped', 'info');
+
+    // Immediately update status bar
+    this.statusUpdateCallback?.();
   }
 
   /**
@@ -150,7 +184,7 @@ export class AutoRetryService {
   public getStatus(): { running: boolean; clicks: number; connectionCount: number } {
     return {
       running: this.isRunning && this.cdpHandler.isRunning(),
-      clicks: 0,
+      clicks: this.cachedClicks,
       connectionCount: this.cdpHandler.getConnectionCount()
     };
   }

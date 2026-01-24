@@ -4,13 +4,20 @@
 
 Zero-babysitting automation for VS Code, Cursor, and compatible editors.
 
+![IDE Auto Retry Screenshot](ide-auto-retry.jpg)
+
 ## Features
 
 - 🔄 **Automatic Retry** - Automatically clicks "Retry" buttons when AI agents (Gemini, Copilot, Claude, etc.) encounter errors
 - 🛡️ **Safe by Design** - Blocks dangerous commands before clicking
+- 📊 **Status Bar Integration** - Real-time status indicator with click count
+  - 🟢 Green dot when running, gray circle when stopped
+  - Shows total retry clicks (e.g., `● IDEAutoRetry: 5 clicks`)
+  - Click to open the extension panel
 - 🖥️ **Cross-Platform** - Works on macOS, Windows, and Linux
 - 🚀 **Simple UI** - Clean, minimal interface with one-click start/stop
 - ⚙️ **Auto-Start** - Option to automatically start when IDE launches
+- 📈 **Real-time Statistics** - Track clicks and blocked commands in the panel
 
 ## Requirements
 
@@ -43,7 +50,7 @@ code --remote-debugging-port=31905
 
 ## Usage
 
-1. Open the IDE Auto Retry panel from the Activity Bar (⚡ icon)
+1. Open the IDE Auto Retry panel from the Activity Bar ("RETRY" icon)
 2. Click "Start" to begin auto-retrying
 3. The extension will automatically click "Retry" buttons when AI errors occur
 
@@ -101,7 +108,3 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Contributing
 
 Contributions are welcome! Please open an issue or pull request on GitHub.
-
-## Author
-
-Created by [Duc Luong](https://codetay.com)
