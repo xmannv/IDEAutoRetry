@@ -58,9 +58,13 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
         case 'getStatus':
           this.sendStatus();
           this.sendAutoStartSetting();
+          this.sendMaxConnectionsSetting();
           break;
         case 'getStats':
           await this.sendStats();
+          break;
+        case 'setMaxConnections':
+          await this.handleSetMaxConnections(message.data?.value ?? 10);
           break;
       }
     });
@@ -189,6 +193,16 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Handle set max connections setting from webview
+   */
+  private async handleSetMaxConnections(value: number): Promise<void> {
+    const config = vscode.workspace.getConfiguration('ideAutoRetry');
+    await config.update('maxConnections', value, vscode.ConfigurationTarget.Global);
+    this.sendLog(`Max connections set to ${value}`, 'info');
+    this.sendMaxConnectionsSetting();
+  }
+
+  /**
    * Send status to webview
    */
   private sendStatus(): void {
@@ -227,6 +241,19 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
     this._view.webview.postMessage({
       type: 'autoStartSetting',
       data: { enabled }
+    });
+  }
+
+  /**
+   * Send max connections setting to webview
+   */
+  private sendMaxConnectionsSetting(): void {
+    if (!this._view) return;
+    const config = vscode.workspace.getConfiguration('ideAutoRetry');
+    const value = config.get('maxConnections', 10);
+    this._view.webview.postMessage({
+      type: 'maxConnectionsSetting',
+      data: { value }
     });
   }
 

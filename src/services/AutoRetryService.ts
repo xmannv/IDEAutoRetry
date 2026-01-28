@@ -119,7 +119,8 @@ export class AutoRetryService {
     this.log(`✅ Auto Retry started!`, 'success');
     this.log(`Connected to ${this.cdpHandler.getConnectionCount()} page(s)`, 'info');
 
-    // Start polling to maintain connection
+    // Start polling to maintain connection (OPTIMIZED: 10s instead of 5s)
+    // Connections are stable once established, no need to poll frequently
     this.pollTimer = setInterval(async () => {
       if (!this.isRunning) return;
 
@@ -127,9 +128,10 @@ export class AutoRetryService {
         pollInterval: this.config.pollInterval,
         bannedCommands: this.getDefaultBannedCommands()
       });
-    }, 5000);
+    }, 10000);
 
-    // Start stats polling to update status bar
+    // Start stats polling to update status bar (OPTIMIZED: 5s instead of 2s)
+    // Stats are not critical, reducing frequency saves CPU
     this.statsTimer = setInterval(async () => {
       if (!this.isRunning) return;
 
@@ -138,7 +140,7 @@ export class AutoRetryService {
         this.cachedClicks = stats.clicks;
         this.statusUpdateCallback?.();
       }
-    }, 2000);
+    }, 5000);
 
     // Immediately update status bar
     this.statusUpdateCallback?.();

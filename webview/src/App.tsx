@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Play, Square, Settings, RefreshCw } from 'lucide-react'
+import { Play, Square, Settings, RefreshCw, Minus, Plus } from 'lucide-react'
 
 interface StatusData {
   running: boolean
@@ -28,6 +28,7 @@ function App() {
     cdpPort: 31905
   })
   const [autoStart, setAutoStart] = useState(false)
+  const [maxConnections, setMaxConnections] = useState(10)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const logIdRef = useRef(0)
   const logContainerRef = useRef<HTMLDivElement>(null)
@@ -79,6 +80,9 @@ function App() {
         case 'autoStartSetting':
           setAutoStart(message.data.enabled)
           break
+        case 'maxConnectionsSetting':
+          setMaxConnections(message.data.value)
+          break
       }
     }
 
@@ -97,6 +101,12 @@ function App() {
   const handleAutoStartChange = (checked: boolean) => {
     setAutoStart(checked)
     vscode.postMessage({ type: 'setAutoStart', data: { enabled: checked } })
+  }
+
+  const handleMaxConnectionsChange = (delta: number) => {
+    const newValue = Math.max(1, Math.min(50, maxConnections + delta))
+    setMaxConnections(newValue)
+    vscode.postMessage({ type: 'setMaxConnections', data: { value: newValue } })
   }
 
   return (
@@ -224,19 +234,53 @@ function App() {
           </CardContent>
         </Card>
 
-        {/* CDP Info */}
+        {/* Settings Card */}
         <Card className="py-0 gap-0">
-          <CardContent className="p-3">
+          <CardHeader className="pb-0 pt-3 px-3">
+            <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+              <Settings className="h-3 w-3" />
+              Settings
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pt-2 pb-3 space-y-2">
+            {/* CDP Port */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs">
-                <Settings className="h-3 w-3 text-muted-foreground" />
-                <span className="text-muted-foreground">CDP Port:</span>
-                <span className="font-mono font-medium text-foreground">{status.cdpPort}</span>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleSetupCDP} className="h-6 text-xs px-2">
-                Setup CDP
-              </Button>
+              <span className="text-[11px] text-muted-foreground">CDP Port:</span>
+              <span className="font-mono text-xs font-medium text-foreground">{status.cdpPort}</span>
             </div>
+            
+            {/* Max Connections */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground">Max Connections:</span>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-5 w-5 p-0" 
+                  onClick={() => handleMaxConnectionsChange(-1)}
+                  disabled={maxConnections <= 1}
+                >
+                  <Minus className="h-3 w-3" />
+                </Button>
+                <span className="font-mono text-xs font-medium text-foreground w-6 text-center">
+                  {maxConnections}
+                </span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-5 w-5 p-0" 
+                  onClick={() => handleMaxConnectionsChange(1)}
+                  disabled={maxConnections >= 50}
+                >
+                  <Plus className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+            
+            {/* Setup CDP Button */}
+            <Button variant="outline" size="sm" onClick={handleSetupCDP} className="w-full h-7 text-xs">
+              Setup CDP
+            </Button>
           </CardContent>
         </Card>
       </div>

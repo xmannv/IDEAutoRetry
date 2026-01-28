@@ -23,6 +23,7 @@ export interface CDPStats {
 interface CDPConnection {
   ws: any;
   injected: boolean;
+  connectedAt: number;  // Timestamp for LRU eviction
 }
 
 export type CDPLogCallback = (message: string, type: 'info' | 'success' | 'error' | 'warning') => void;
@@ -35,11 +36,14 @@ export class CDPHandler {
   private statusUpdateCallback?: () => void;
   private basePort: number;
   private portRange: number;
+  private maxConnections: number = 10;  // Default, will be updated on start()
+  private pendingMessages: Map<number, { timeout: NodeJS.Timeout; cleanup: () => void }> = new Map();
 
   constructor() {
     const config = vscode.workspace.getConfiguration('ideAutoRetry');
     this.basePort = config.get('cdpPort', 31905);
     this.portRange = config.get('cdpPortRange', 3);
+    // Note: maxConnections is read dynamically in start() to support live updates
   }
 
   /**
@@ -126,6 +130,11 @@ export class CDPHandler {
     }
 
     this.isEnabled = true;
+    
+    // Read maxConnections from config (supports live updates from panel)
+    const vsConfig = vscode.workspace.getConfiguration('ideAutoRetry');
+    this.maxConnections = vsConfig.get('maxConnections', 10);
+    
     this.log(`Scanning ports ${this.basePort - this.portRange} to ${this.basePort + this.portRange}...`, 'info');
 
     // Clean up dead connections first
@@ -142,13 +151,28 @@ export class CDPHandler {
         const pages = await this.getPages(port);
         for (const page of pages) {
           const id = `${port}:${page.id}`;
-          if (!this.connections.has(id)) {
-            const success = await this.connect(id, page.webSocketDebuggerUrl);
-            if (success) {
-              newConnections++;
+          
+          // If already connected, skip
+          if (this.connections.has(id)) {
+            // Only inject if not already injected
+            const conn = this.connections.get(id);
+            if (conn && !conn.injected) {
+              await this.inject(id, config);
             }
+            continue;
           }
-          await this.inject(id, config);
+          
+          // Need to create new connection
+          // If at max, evict oldest connection first (LRU)
+          if (this.connections.size >= this.maxConnections) {
+            this.evictOldestConnection();
+          }
+          
+          const success = await this.connect(id, page.webSocketDebuggerUrl);
+          if (success) {
+            newConnections++;
+            await this.inject(id, config);
+          }
         }
       } catch (e) {
         // Port not available
@@ -168,13 +192,40 @@ export class CDPHandler {
 
   /**
    * Stop the CDP handler
+   * Fixed: Cleanup all pending messages to prevent memory leaks
+   * Fixed: Call __autoRetryStop on pages before closing to cleanup observers
    */
   async stop(): Promise<void> {
     this.isEnabled = false;
 
+    // Cleanup all pending messages first
+    for (const [msgId, { timeout, cleanup }] of this.pendingMessages) {
+      clearTimeout(timeout);
+      cleanup();
+    }
+    this.pendingMessages.clear();
+
+    // Call __autoRetryStop on each page to cleanup observers before closing
     for (const [id, conn] of this.connections) {
       try {
-        await this.evaluate(id, 'if(window.__autoRetryStop) window.__autoRetryStop()');
+        if (conn.ws.readyState === 1) { // OPEN
+          // Quick evaluate without waiting (fire and forget)
+          conn.ws.send(JSON.stringify({
+            id: this.msgId++,
+            method: 'Runtime.evaluate',
+            params: { expression: 'if(window.__autoRetryStop) window.__autoRetryStop()' }
+          }));
+        }
+      } catch (e) {
+        // Ignore errors during cleanup
+      }
+    }
+
+    // Give a moment for stop commands to execute, then close
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    for (const [id, conn] of this.connections) {
+      try {
         conn.ws.close();
       } catch (e) {
         // Ignore errors during cleanup
@@ -183,6 +234,43 @@ export class CDPHandler {
 
     this.connections.clear();
     this.log('CDP handler stopped', 'info');
+  }
+
+  /**
+   * Evict the oldest connection (LRU strategy)
+   * Called when max connections reached and need to make room for new page
+   */
+  private evictOldestConnection(): void {
+    let oldestId: string | null = null;
+    let oldestTime = Infinity;
+
+    for (const [id, conn] of this.connections) {
+      if (conn.connectedAt < oldestTime) {
+        oldestTime = conn.connectedAt;
+        oldestId = id;
+      }
+    }
+
+    if (oldestId) {
+      const conn = this.connections.get(oldestId);
+      if (conn) {
+        try {
+          // Call __autoRetryStop on the page before closing
+          if (conn.ws.readyState === 1) {
+            conn.ws.send(JSON.stringify({
+              id: this.msgId++,
+              method: 'Runtime.evaluate',
+              params: { expression: 'if(window.__autoRetryStop) window.__autoRetryStop()' }
+            }));
+          }
+          conn.ws.close();
+        } catch (e) {
+          // Ignore errors during eviction
+        }
+        this.connections.delete(oldestId);
+        this.log(`Evicted oldest connection: ${oldestId} (LRU)`, 'info');
+      }
+    }
   }
 
   /**
@@ -218,24 +306,43 @@ export class CDPHandler {
 
   /**
    * Connect to a CDP page via WebSocket
+   * Fixed: Added 5s timeout to prevent hanging connections
    */
   private async connect(id: string, url: string): Promise<boolean> {
     return new Promise((resolve) => {
       try {
         const ws = new WebSocket(url);
+        let resolved = false;
+
+        // Timeout after 5 seconds
+        const timeout = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            this.log(`Connection timeout for ${id}`, 'warning');
+            try { ws.close(); } catch (e) {}
+            resolve(false);
+          }
+        }, 5000);
 
         ws.on('open', () => {
-          this.connections.set(id, { ws, injected: false });
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timeout);
+          this.connections.set(id, { ws, injected: false, connectedAt: Date.now() });
           this.log(`Connected to page ${id}`, 'success');
           resolve(true);
         });
 
         ws.on('error', (err: any) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timeout);
           this.log(`WebSocket error for ${id}: ${err.message}`, 'error');
           resolve(false);
         });
 
         ws.on('close', () => {
+          // Connection was closed - remove from map and mark for re-injection
           this.connections.delete(id);
           this.log(`Disconnected from page ${id}`, 'info');
         });
@@ -247,6 +354,7 @@ export class CDPHandler {
 
   /**
    * Inject auto-retry script into page
+   * OPTIMIZED: Only inject once, script auto-starts. No need to call __autoRetryStart repeatedly.
    */
   private async inject(id: string, config?: CDPConfig): Promise<void> {
     const conn = this.connections.get(id);
@@ -254,14 +362,17 @@ export class CDPHandler {
 
     try {
       if (!conn.injected) {
-        const script = this.getInjectScript();
+        // First time: inject script with config embedded
+        const script = this.getInjectScript(config);
         await this.evaluate(id, script);
         conn.injected = true;
         this.log(`Script injected into ${id}`, 'success');
+        
+        // Start the auto-retry (only once after injection)
+        const configJson = JSON.stringify(config || {});
+        await this.evaluate(id, `if(window.__autoRetryStart) window.__autoRetryStart(${configJson})`);
       }
-
-      const configJson = JSON.stringify(config || {});
-      await this.evaluate(id, `if(window.__autoRetryStart) window.__autoRetryStart(${configJson})`);
+      // If already injected, do nothing - script is already running
     } catch (e: any) {
       this.log(`Injection failed for ${id}: ${e.message}`, 'error');
     }
@@ -269,6 +380,7 @@ export class CDPHandler {
 
   /**
    * Evaluate JavaScript in the page context
+   * Fixed: Properly cleanup message listeners on timeout to prevent memory leaks
    */
   private async evaluate(id: string, expression: string): Promise<any> {
     const conn = this.connections.get(id);
@@ -276,20 +388,35 @@ export class CDPHandler {
 
     return new Promise((resolve, reject) => {
       const currentId = this.msgId++;
-      const timeout = setTimeout(() => reject(new Error('CDP Timeout')), 5000);
+      let resolved = false;
+
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        conn.ws.off('message', onMessage);
+        this.pendingMessages.delete(currentId);
+      };
+
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('CDP Timeout'));
+      }, 5000);
 
       const onMessage = (data: any) => {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.id === currentId) {
-            conn.ws.off('message', onMessage);
             clearTimeout(timeout);
+            cleanup();
             resolve(msg.result);
           }
         } catch (e) {
           // Ignore parse errors
         }
       };
+
+      // Track pending message for cleanup on stop()
+      this.pendingMessages.set(currentId, { timeout, cleanup });
 
       conn.ws.on('message', onMessage);
       conn.ws.send(JSON.stringify({
@@ -361,8 +488,9 @@ export class CDPHandler {
 
   /**
    * Get the auto-retry inject script
+   * @param config Optional config to embed in script
    */
-  private getInjectScript(): string {
+  private getInjectScript(config?: CDPConfig): string {
     return `
 (function() {
   // Prevent double-loading
@@ -395,6 +523,10 @@ export class CDPHandler {
 
   let isProcessing = false;
   let pollTimer = null;
+  
+  // Track observers to prevent accumulation (PERFORMANCE FIX)
+  let observers = [];
+  let observerSetupDone = false;
 
   // Only click Retry button
   const RETRY_PATTERN = 'Retry';
@@ -475,22 +607,56 @@ export class CDPHandler {
     }
   }
 
-  // Setup MutationObserver
+  // Debounce helper (PERFORMANCE FIX)
+  let debounceTimer = null;
+  function debouncedFindAndClick() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(findAndClickButtons, 100);
+  }
+
+  // Setup MutationObserver - only once per document (PERFORMANCE FIX)
   function setupObserver(doc) {
+    // Check if observer already exists for this document
+    if (doc.__autoRetryObserver) {
+      return;
+    }
+    
     try {
-      const observer = new MutationObserver(() => {
-        setTimeout(findAndClickButtons, 100);
-      });
+      const observer = new MutationObserver(debouncedFindAndClick);
 
       observer.observe(doc.body, {
         childList: true,
         subtree: true
       });
 
+      // Mark document as having observer
+      doc.__autoRetryObserver = observer;
+      observers.push(observer);
+
       console.log('[Auto Retry] Observer started');
     } catch (e) {
       console.log('[Auto Retry] Could not setup observer:', e.message);
     }
+  }
+
+  // Cleanup all observers (PERFORMANCE FIX)
+  function cleanupObservers() {
+    for (const observer of observers) {
+      try { observer.disconnect(); } catch (e) {}
+    }
+    observers = [];
+    observerSetupDone = false;
+    
+    // Also clear the marker on documents (FIX: allow re-setup after restart)
+    try { delete document.__autoRetryObserver; } catch (e) {}
+    document.querySelectorAll('iframe').forEach(iframe => {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) delete iframeDoc.__autoRetryObserver;
+      } catch (e) {}
+    });
+    
+    console.log('[Auto Retry] Observers cleaned up');
   }
 
   // Start auto-retry
@@ -500,16 +666,21 @@ export class CDPHandler {
     }
 
     findAndClickButtons();
-    setupObserver(document);
+    
+    // Only setup observers once (PERFORMANCE FIX)
+    if (!observerSetupDone) {
+      setupObserver(document);
 
-    document.querySelectorAll('iframe').forEach(iframe => {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (iframeDoc?.body) {
-          setupObserver(iframeDoc);
-        }
-      } catch (e) {}
-    });
+      document.querySelectorAll('iframe').forEach(iframe => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc?.body) {
+            setupObserver(iframeDoc);
+          }
+        } catch (e) {}
+      });
+      observerSetupDone = true;
+    }
 
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(findAndClickButtons, config.pollInterval);
@@ -517,13 +688,20 @@ export class CDPHandler {
     console.log('[Auto Retry] ✅ Started with interval: ' + config.pollInterval + 'ms');
   };
 
-  // Stop auto-retry
+  // Stop auto-retry (PERFORMANCE FIX - now cleans up observers and resets loaded flag)
   window.__autoRetryStop = function() {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
-    console.log('[Auto Retry] Stopped');
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    cleanupObservers();
+    // Reset loaded flag to allow re-injection after restart
+    window.__autoRetryLoaded = false;
+    console.log('[Auto Retry] Stopped and reset');
   };
 
   // Get stats
@@ -534,6 +712,16 @@ export class CDPHandler {
   // Reset stats
   window.__autoRetryResetStats = function() {
     stats = { clicks: 0, blocked: 0 };
+  };
+
+  // Get health info (NEW - for debugging)
+  window.__autoRetryGetHealth = function() {
+    return {
+      observerCount: observers.length,
+      observerSetupDone: observerSetupDone,
+      pollTimerActive: !!pollTimer,
+      stats: stats
+    };
   };
 
   console.log('[Auto Retry] ✅ Loaded! Ready to auto-click Retry button on errors.');
