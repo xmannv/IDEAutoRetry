@@ -55,9 +55,13 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
         case 'setAutoStart':
           await this.handleSetAutoStart(message.data?.enabled ?? false);
           break;
+        case 'setAcceptAll':
+          await this.handleSetAcceptAll(message.data?.enabled ?? false);
+          break;
         case 'getStatus':
           this.sendStatus();
           this.sendAutoStartSetting();
+          this.sendAcceptAllSetting();
           this.sendMaxConnectionsSetting();
           break;
         case 'getStats':
@@ -193,6 +197,15 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Handle set accept all setting from webview
+   */
+  private async handleSetAcceptAll(enabled: boolean): Promise<void> {
+    const config = vscode.workspace.getConfiguration('ideAutoRetry');
+    await config.update('acceptAll', enabled, vscode.ConfigurationTarget.Global);
+    this.sendLog(enabled ? 'Accept All enabled' : 'Accept All disabled', 'info');
+  }
+
+  /**
    * Handle set max connections setting from webview
    */
   private async handleSetMaxConnections(value: number): Promise<void> {
@@ -213,6 +226,7 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
       data: {
         running: status.running,
         clicks: status.clicks,
+        acceptAllClicks: status.acceptAllClicks,
         connectionCount: status.connectionCount,
         cdpPort: this._autoRetryService.getCDPPort()
       }
@@ -240,6 +254,19 @@ export class SidePanelProvider implements vscode.WebviewViewProvider {
     const enabled = config.get('autoStart', false);
     this._view.webview.postMessage({
       type: 'autoStartSetting',
+      data: { enabled }
+    });
+  }
+
+  /**
+   * Send accept all setting to webview
+   */
+  private sendAcceptAllSetting(): void {
+    if (!this._view) return;
+    const config = vscode.workspace.getConfiguration('ideAutoRetry');
+    const enabled = config.get('acceptAll', false);
+    this._view.webview.postMessage({
+      type: 'acceptAllSetting',
       data: { enabled }
     });
   }

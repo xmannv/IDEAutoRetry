@@ -26,6 +26,7 @@ export class AutoRetryService {
   private statsTimer?: ReturnType<typeof setInterval>;
   private config: AutoRetryConfig;
   private cachedClicks: number = 0;
+  private cachedAcceptAllClicks: number = 0;
 
   constructor() {
     this.config = this.getConfig();
@@ -105,9 +106,12 @@ export class AutoRetryService {
     this.log('Starting Auto Retry...', 'info');
 
     this.config = this.getConfig();
+    const vsConfig = vscode.workspace.getConfiguration('ideAutoRetry');
+    const acceptAll = vsConfig.get('acceptAll', false);
     const connected = await this.cdpHandler.start({
       pollInterval: this.config.pollInterval,
-      bannedCommands: this.getDefaultBannedCommands()
+      bannedCommands: this.getDefaultBannedCommands(),
+      acceptAll
     });
 
     if (!connected) {
@@ -124,9 +128,12 @@ export class AutoRetryService {
     this.pollTimer = setInterval(async () => {
       if (!this.isRunning) return;
 
+      const latestConfig = vscode.workspace.getConfiguration('ideAutoRetry');
+      const latestAcceptAll = latestConfig.get('acceptAll', false);
       await this.cdpHandler.start({
         pollInterval: this.config.pollInterval,
-        bannedCommands: this.getDefaultBannedCommands()
+        bannedCommands: this.getDefaultBannedCommands(),
+        acceptAll: latestAcceptAll
       });
     }, 10000);
 
@@ -136,8 +143,9 @@ export class AutoRetryService {
       if (!this.isRunning) return;
 
       const stats = await this.cdpHandler.getStats();
-      if (stats.clicks !== this.cachedClicks) {
+      if (stats.clicks !== this.cachedClicks || stats.acceptAllClicks !== this.cachedAcceptAllClicks) {
         this.cachedClicks = stats.clicks;
+        this.cachedAcceptAllClicks = stats.acceptAllClicks;
         this.statusUpdateCallback?.();
       }
     }, 5000);
@@ -165,6 +173,7 @@ export class AutoRetryService {
     }
 
     this.cachedClicks = 0;
+    this.cachedAcceptAllClicks = 0;
     await this.cdpHandler.stop();
     this.log('Auto Retry stopped', 'info');
 
@@ -183,10 +192,11 @@ export class AutoRetryService {
   /**
    * Get service status
    */
-  public getStatus(): { running: boolean; clicks: number; connectionCount: number } {
+  public getStatus(): { running: boolean; clicks: number; acceptAllClicks: number; connectionCount: number } {
     return {
       running: this.isRunning && this.cdpHandler.isRunning(),
       clicks: this.cachedClicks,
+      acceptAllClicks: this.cachedAcceptAllClicks,
       connectionCount: this.cdpHandler.getConnectionCount()
     };
   }

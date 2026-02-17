@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Play, Square, Settings, RefreshCw, Minus, Plus } from 'lucide-react'
+import { Play, Square, Settings, RefreshCw, Minus, Plus, CheckCheck } from 'lucide-react'
 
 interface StatusData {
   running: boolean
   clicks: number
+  acceptAllClicks: number
   connectionCount: number
   cdpPort: number
 }
@@ -24,10 +25,12 @@ function App() {
   const [status, setStatus] = useState<StatusData>({
     running: false,
     clicks: 0,
+    acceptAllClicks: 0,
     connectionCount: 0,
     cdpPort: 31905
   })
   const [autoStart, setAutoStart] = useState(false)
+  const [acceptAll, setAcceptAll] = useState(false)
   const [maxConnections, setMaxConnections] = useState(10)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const logIdRef = useRef(0)
@@ -69,10 +72,10 @@ function App() {
       
       switch (message.type) {
         case 'status':
-          setStatus(message.data)
+          setStatus(prev => ({ ...prev, ...message.data, acceptAllClicks: message.data.acceptAllClicks ?? prev.acceptAllClicks }))
           break
         case 'stats':
-          setStatus(prev => ({ ...prev, clicks: message.data.clicks }))
+          setStatus(prev => ({ ...prev, clicks: message.data.clicks, acceptAllClicks: message.data.acceptAllClicks || 0 }))
           break
         case 'log':
           addLog(message.data.message, message.data.logType)
@@ -82,6 +85,9 @@ function App() {
           break
         case 'maxConnectionsSetting':
           setMaxConnections(message.data.value)
+          break
+        case 'acceptAllSetting':
+          setAcceptAll(message.data.enabled)
           break
       }
     }
@@ -107,6 +113,11 @@ function App() {
     const newValue = Math.max(1, Math.min(50, maxConnections + delta))
     setMaxConnections(newValue)
     vscode.postMessage({ type: 'setMaxConnections', data: { value: newValue } })
+  }
+
+  const handleAcceptAllChange = (checked: boolean) => {
+    setAcceptAll(checked)
+    vscode.postMessage({ type: 'setAcceptAll', data: { enabled: checked } })
   }
 
   return (
@@ -179,6 +190,23 @@ function App() {
                   Auto-start on IDE launch
                 </label>
               </div>
+
+              {/* Accept All checkbox */}
+              <div className="flex items-center gap-1.5">
+                <Checkbox 
+                  id="acceptAll" 
+                  checked={acceptAll}
+                  onCheckedChange={handleAcceptAllChange}
+                  className="h-3.5 w-3.5"
+                />
+                <label 
+                  htmlFor="acceptAll" 
+                  className="text-[11px] text-muted-foreground cursor-pointer flex items-center gap-1"
+                >
+                  <CheckCheck className="h-3 w-3" />
+                  Auto Accept All
+                </label>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -192,10 +220,14 @@ function App() {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-3 pt-1 pb-3">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <div className="flex flex-col items-center rounded bg-muted/50 py-1.5 px-2">
                 <span className="text-lg font-bold text-foreground leading-tight">{status.clicks}</span>
                 <span className="text-[9px] text-muted-foreground uppercase tracking-wide">Retries</span>
+              </div>
+              <div className="flex flex-col items-center rounded bg-muted/50 py-1.5 px-2">
+                <span className="text-lg font-bold text-foreground leading-tight">{status.acceptAllClicks}</span>
+                <span className="text-[9px] text-muted-foreground uppercase tracking-wide">Accepts</span>
               </div>
               <div className="flex flex-col items-center rounded bg-muted/50 py-1.5 px-2">
                 <span className="text-lg font-bold text-foreground leading-tight">{status.connectionCount}</span>

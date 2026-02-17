@@ -2,7 +2,7 @@
   "name": "ide-auto-retry",
   "displayName": "IDE Auto Retry",
   "description": "Auto-click Retry buttons when AI coding agents encounter errors. Zero-babysitting automation for VS Code, Cursor, and compatible editors.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "codetay",
   "author": "Duc Luong <https://codetay.com>",
   "icon": "resources/icons/icon.png",
@@ -130,6 +130,11 @@
           "minimum": 1000,
           "maximum": 60000,
           "description": "Cooldown in milliseconds after clicking retry button"
+        },
+        "ideAutoRetry.acceptAll": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically click 'Accept All' buttons in the Antigravity agent panel"
         },
         "ideAutoRetry.maxConnections": {
           "type": "number",

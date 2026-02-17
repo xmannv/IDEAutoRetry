@@ -13,11 +13,13 @@ let WebSocket: any;
 export interface CDPConfig {
   pollInterval?: number;
   bannedCommands?: string[];
+  acceptAll?: boolean;
 }
 
 export interface CDPStats {
   clicks: number;
   blocked: number;
+  acceptAllClicks: number;
 }
 
 interface CDPConnection {
@@ -38,6 +40,7 @@ export class CDPHandler {
   private portRange: number;
   private maxConnections: number = 10;  // Default, will be updated on start()
   private pendingMessages: Map<number, { timeout: NodeJS.Timeout; cleanup: () => void }> = new Map();
+  private lastAcceptAll: boolean = false;  // Track to avoid redundant config updates
 
   constructor() {
     const config = vscode.workspace.getConfiguration('ideAutoRetry');
@@ -152,12 +155,17 @@ export class CDPHandler {
         for (const page of pages) {
           const id = `${port}:${page.id}`;
           
-          // If already connected, skip
+          // If already connected, update runtime config if needed
           if (this.connections.has(id)) {
-            // Only inject if not already injected
             const conn = this.connections.get(id);
             if (conn && !conn.injected) {
               await this.inject(id, config);
+            } else if (conn && conn.injected) {
+              // Update runtime config (e.g. acceptAll toggle) only if changed
+              const currentAcceptAll = !!config?.acceptAll;
+              if (currentAcceptAll !== this.lastAcceptAll) {
+                await this.inject(id, config);
+              }
             }
             continue;
           }
@@ -183,6 +191,8 @@ export class CDPHandler {
 
     if (totalConnections > 0) {
       this.log(`Connected to ${totalConnections} page(s)`, 'success');
+      // Update tracked acceptAll state after propagating to all connections
+      this.lastAcceptAll = !!config?.acceptAll;
       return true;
     } else {
       this.log('No CDP connections. Is IDE launched with --remote-debugging-port=31905?', 'warning');
@@ -371,8 +381,10 @@ export class CDPHandler {
         // Start the auto-retry (only once after injection)
         const configJson = JSON.stringify(config || {});
         await this.evaluate(id, `if(window.__autoRetryStart) window.__autoRetryStart(${configJson})`);
+      } else {
+        // Already injected - update runtime config (e.g. acceptAll toggle)
+        await this.evaluate(id, `if(window.__autoRetryConfig) window.__autoRetryConfig.acceptAll = ${!!config?.acceptAll}`);
       }
-      // If already injected, do nothing - script is already running
     } catch (e: any) {
       this.log(`Injection failed for ${id}: ${e.message}`, 'error');
     }
@@ -435,7 +447,7 @@ export class CDPHandler {
    * Get stats from all connected pages
    */
   async getStats(): Promise<CDPStats> {
-    const stats: CDPStats = { clicks: 0, blocked: 0 };
+    const stats: CDPStats = { clicks: 0, blocked: 0, acceptAllClicks: 0 };
 
     for (const [id] of this.connections) {
       try {
@@ -446,6 +458,7 @@ export class CDPHandler {
           const s = JSON.parse(res.result.value);
           stats.clicks += s.clicks || 0;
           stats.blocked += s.blocked || 0;
+          stats.acceptAllClicks += s.acceptAllClicks || 0;
         }
       } catch (e) {
         // Ignore errors
@@ -501,11 +514,12 @@ export class CDPHandler {
   window.__autoRetryLoaded = true;
 
   // Stats tracking
-  let stats = { clicks: 0, blocked: 0 };
+  let stats = { clicks: 0, blocked: 0, acceptAllClicks: 0 };
 
-  // Config
-  let config = {
+  // Config (exposed on window for runtime updates)
+  window.__autoRetryConfig = {
     pollInterval: 1000,
+    acceptAll: ${!!config?.acceptAll},
     bannedCommands: [
       'rm -rf /',
       'rm -rf ~',
@@ -520,6 +534,7 @@ export class CDPHandler {
       'chmod -R 777 /'
     ]
   };
+  let config = window.__autoRetryConfig;
 
   let isProcessing = false;
   let pollTimer = null;
@@ -530,6 +545,7 @@ export class CDPHandler {
 
   // Only click Retry button
   const RETRY_PATTERN = 'Retry';
+  const ACCEPT_ALL_PATTERN = 'Accept All';
 
   // Check if element is in an error context
   function isErrorContext(element) {
@@ -557,23 +573,76 @@ export class CDPHandler {
     );
   }
 
-  // Find and click Retry buttons
+  // Get all accessible documents (recursive iframe + shadow DOM traversal)
+  // CACHED: querySelectorAll('*') is expensive, cache results for 5 seconds
+  let cachedDocs = null;
+  let cachedDocsTime = 0;
+  const DOCS_CACHE_TTL = 5000;
+
+  function getAllDocuments(root) {
+    const now = Date.now();
+    if (cachedDocs && (now - cachedDocsTime) < DOCS_CACHE_TTL) {
+      return cachedDocs;
+    }
+
+    let docs = [];
+    let visited = new Set();
+    
+    function traverse(node) {
+      if (!node || visited.has(node)) return;
+      visited.add(node);
+      
+      // If it's a document, add it
+      if (node.nodeType === 9) docs.push(node); // DOCUMENT_NODE
+      
+      // Get the root element to search
+      let searchRoot = node;
+      if (node.nodeType === 9) searchRoot = node.documentElement || node.body;
+      if (!searchRoot || !searchRoot.querySelectorAll) return;
+      
+      try {
+        // Find iframes and frames
+        const iframes = searchRoot.querySelectorAll('iframe, frame, webview');
+        for (const iframe of iframes) {
+          try {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (iframeDoc) traverse(iframeDoc);
+          } catch (e) { /* cross-origin, skip */ }
+        }
+        
+        // Traverse shadow DOMs (crucial for VS Code webview panels)
+        const allElements = searchRoot.querySelectorAll('*');
+        for (const el of allElements) {
+          if (el.shadowRoot) {
+            traverse(el.shadowRoot);
+          }
+        }
+      } catch (e) {}
+    }
+    
+    traverse(root);
+    cachedDocs = docs;
+    cachedDocsTime = now;
+    return docs;
+  }
+
+  // Invalidate document cache (called when new panels may appear)
+  function invalidateDocsCache() {
+    cachedDocs = null;
+    cachedDocsTime = 0;
+  }
+
+  // Find and click Retry buttons + Accept All
   function findAndClickButtons() {
     if (isProcessing) return;
     isProcessing = true;
 
     try {
-      clickButtonsInDocument(document);
-
-      const iframes = document.querySelectorAll('iframe');
-      for (const iframe of iframes) {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            clickButtonsInDocument(iframeDoc);
-          }
-        } catch (e) {
-          // Cross-origin iframe, skip
+      const docs = getAllDocuments(document);
+      for (const doc of docs) {
+        clickRetryButtonsInDocument(doc);
+        if (config.acceptAll) {
+          clickAcceptAllInDocument(doc);
         }
       }
     } catch (e) {
@@ -584,7 +653,7 @@ export class CDPHandler {
   }
 
   // Click Retry buttons in a document
-  function clickButtonsInDocument(doc) {
+  function clickRetryButtonsInDocument(doc) {
     const buttons = doc.querySelectorAll('button, [role="button"]');
     
     for (const btn of buttons) {
@@ -607,11 +676,61 @@ export class CDPHandler {
     }
   }
 
-  // Debounce helper (PERFORMANCE FIX)
+  // Click "Accept All" elements in a document
+  function clickAcceptAllInDocument(doc) {
+    // Strategy 1: Find by exact text in any clickable/text element
+    const allElements = doc.querySelectorAll('span, div, button, a, [role="button"]');
+    
+    for (const el of allElements) {
+      // Use innerText (visible text only) with fallback to textContent
+      let text = '';
+      try { text = (el.innerText || el.textContent || '').trim(); } catch(e) { continue; }
+      
+      // Match: exact "Accept All" or contains it for elements with icons
+      if (text !== ACCEPT_ALL_PATTERN && text !== 'Accept all') continue;
+      
+      // Skip if this element contains too much text (it's a container, not a button)
+      if (text.length > 30) continue;
+      
+      // Visibility check
+      try {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || 
+            style.opacity === '0' || rect.width === 0 || rect.height === 0) continue;
+      } catch (e) { continue; }
+      
+      // Find the best element to click: prefer closest interactive ancestor
+      let clickTarget = el;
+      try {
+        const interactiveParent = el.closest('button, [role="button"], a, [tabindex]');
+        if (interactiveParent) clickTarget = interactiveParent;
+      } catch(e) {}
+      
+      // Click with multiple methods for reliability
+      try { clickTarget.click(); } catch(e) {}
+      try {
+        clickTarget.dispatchEvent(new MouseEvent('click', {
+          view: window, bubbles: true, cancelable: true
+        }));
+      } catch(e) {}
+      // Also try pointer events (some frameworks use these)
+      try {
+        clickTarget.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        clickTarget.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      } catch(e) {}
+      
+      stats.acceptAllClicks++;
+      console.log('[Auto Retry] ✅ Clicked Accept All! (Total: ' + stats.acceptAllClicks + ') Tag: ' + el.tagName + ' Text: "' + text + '"');
+      return; // Only click once per document per cycle
+    }
+  }
+
+  // Debounce helper (PERFORMANCE FIX: 500ms to avoid thrashing on rapid DOM mutations)
   let debounceTimer = null;
   function debouncedFindAndClick() {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(findAndClickButtons, 100);
+    debounceTimer = setTimeout(findAndClickButtons, 500);
   }
 
   // Setup MutationObserver - only once per document (PERFORMANCE FIX)
@@ -647,14 +766,16 @@ export class CDPHandler {
     observers = [];
     observerSetupDone = false;
     
-    // Also clear the marker on documents (FIX: allow re-setup after restart)
-    try { delete document.__autoRetryObserver; } catch (e) {}
-    document.querySelectorAll('iframe').forEach(iframe => {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (iframeDoc) delete iframeDoc.__autoRetryObserver;
-      } catch (e) {}
-    });
+    // Clean markers on ALL documents (use cache or fresh scan)
+    try {
+      const allDocs = getAllDocuments(document);
+      for (const doc of allDocs) {
+        try { delete doc.__autoRetryObserver; } catch (e) {}
+      }
+    } catch (e) {}
+    
+    // Invalidate cache since we're resetting
+    invalidateDocsCache();
     
     console.log('[Auto Retry] Observers cleaned up');
   }
@@ -662,30 +783,25 @@ export class CDPHandler {
   // Start auto-retry
   window.__autoRetryStart = function(userConfig) {
     if (userConfig) {
-      config = { ...config, ...userConfig };
+      config = Object.assign(config, userConfig);
+      window.__autoRetryConfig = config;
     }
 
     findAndClickButtons();
     
     // Only setup observers once (PERFORMANCE FIX)
     if (!observerSetupDone) {
-      setupObserver(document);
-
-      document.querySelectorAll('iframe').forEach(iframe => {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc?.body) {
-            setupObserver(iframeDoc);
-          }
-        } catch (e) {}
-      });
+      const docs = getAllDocuments(document);
+      for (const doc of docs) {
+        if (doc.body) setupObserver(doc);
+      }
       observerSetupDone = true;
     }
 
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(findAndClickButtons, config.pollInterval);
 
-    console.log('[Auto Retry] ✅ Started with interval: ' + config.pollInterval + 'ms');
+    console.log('[Auto Retry] ✅ Started with interval: ' + config.pollInterval + 'ms' + (config.acceptAll ? ' [Accept All ON]' : ''));
   };
 
   // Stop auto-retry (PERFORMANCE FIX - now cleans up observers and resets loaded flag)
@@ -711,20 +827,21 @@ export class CDPHandler {
 
   // Reset stats
   window.__autoRetryResetStats = function() {
-    stats = { clicks: 0, blocked: 0 };
+    stats = { clicks: 0, blocked: 0, acceptAllClicks: 0 };
   };
 
-  // Get health info (NEW - for debugging)
+  // Get health info (for debugging)
   window.__autoRetryGetHealth = function() {
     return {
       observerCount: observers.length,
       observerSetupDone: observerSetupDone,
       pollTimerActive: !!pollTimer,
+      acceptAll: config.acceptAll,
       stats: stats
     };
   };
 
-  console.log('[Auto Retry] ✅ Loaded! Ready to auto-click Retry button on errors.');
+  console.log('[Auto Retry] ✅ Loaded! Ready to auto-click Retry button on errors.' + (config.acceptAll ? ' [Accept All ON]' : ''));
 })();
 `;
   }

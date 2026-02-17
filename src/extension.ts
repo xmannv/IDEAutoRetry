@@ -19,10 +19,13 @@ function updateStatusBar(): void {
   const status = autoRetryService.getStatus();
   
   if (status.running) {
-    // Running state: green dot + click count
-    const clickText = status.clicks > 0 ? `: ${status.clicks} clicks` : '';
-    statusBarItem.text = `$(circle-filled) IDEAutoRetry${clickText}`;
-    statusBarItem.tooltip = `IDE Auto Retry is running\nConnections: ${status.connectionCount}\nClicks: ${status.clicks}\n\nClick to open panel`;
+    // Running state: green dot + stats
+    const parts: string[] = [];
+    if (status.clicks > 0) parts.push(`${status.clicks} retries`);
+    if (status.acceptAllClicks > 0) parts.push(`${status.acceptAllClicks} accepts`);
+    const statsText = parts.length > 0 ? `: ${parts.join(', ')}` : '';
+    statusBarItem.text = `$(circle-filled) IDEAutoRetry${statsText}`;
+    statusBarItem.tooltip = `IDE Auto Retry is running\nConnections: ${status.connectionCount}\nRetries: ${status.clicks}\nAccepts: ${status.acceptAllClicks}\n\nClick to open panel`;
     statusBarItem.color = new vscode.ThemeColor('charts.green');
     statusBarItem.backgroundColor = undefined;
   } else {
